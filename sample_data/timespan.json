@@ -1,0 +1,25 @@
+[
+  {
+    "id": "467160c7-724f-4151-89d6-8b15325fc081",
+    "year_earliest_begin": 1526,
+    "year_latest_begin": 1526,
+    "year_unknown_begin": false,
+    "year_earliest_end": 1858,
+    "year_latest_end": 1858,
+    "year_unknown_end": false,
+    "do_calculate": true,
+    "human_label": "[1526 - 1526] - [1858 - 1858]",
+    "comments": "null"
+  }, {
+    "id": "60d80217-94d7-4354-b9c5-6426ece853dc",
+    "year_earliest_begin": 1526,
+    "year_latest_begin": 1526,
+    "year_unknown_begin": false,
+    "year_earliest_end": 1858,
+    "year_latest_end": 1858,
+    "year_unknown_end": false,
+    "do_calculate": true,
+    "human_label": "[1526 - 1526] - [1858 - 1858]",
+    "comments": "null"
+  }
+]

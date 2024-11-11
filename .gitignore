@@ -1,0 +1,6 @@
+.idea
+*.log
+node_modules
+dist
+test.ts
+output
