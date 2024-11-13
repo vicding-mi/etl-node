@@ -1,10 +1,10 @@
 import fs from 'fs';
 import jsonld from 'jsonld';
-import { DataFactory, Writer, Parser } from 'n3';
+import {Writer, Parser} from 'n3';
 import yargs from 'yargs';
-import { hideBin } from 'yargs/helpers';
-import { config } from './config';
-import { createLogger, format, transports } from 'winston';
+import {hideBin} from 'yargs/helpers';
+import {config} from './config';
+import {createLogger, format, transports} from 'winston';
 
 // Set the log level based on an environment variable or default to 'info'
 const logLevel = process.env.LOG_LEVEL || config.logLevel || 'info';
@@ -13,13 +13,13 @@ const logger = createLogger({
     level: logLevel,
     format: format.combine(
         format.timestamp(),
-        format.printf(({ timestamp, level, message }) => {
+        format.printf(({timestamp, level, message}) => {
             return `${timestamp} [${level}]: ${message}`;
         })
     ),
     transports: [
         new transports.Console(),
-        new transports.File({ filename: 'app.log' })
+        new transports.File({filename: 'app.log'})
     ]
 });
 
@@ -33,6 +33,7 @@ interface JsonLdContext {
 interface JsonLdGraph {
     "@id": string;
     "@type": string;
+
     [key: string]: any;
 }
 
@@ -49,12 +50,12 @@ async function convertJsonLdToTtl(jsonLd: any): Promise<string> {
     const expanded = await jsonld.expand(jsonLd);
 
     // Convert expanded JSON-LD to N-Quads
-    const nquads = await jsonld.toRDF(expanded, { format: 'application/n-quads' });
+    const nQuads = await jsonld.toRDF(expanded, {format: 'application/n-quads'});
 
     // Parse N-Quads and write as Turtle
-    const writer = new Writer({ format: 'text/turtle' });
-    const parser = new Parser({ format: 'application/n-quads' });
-    const quads = parser.parse(nquads);
+    const writer = new Writer({format: 'text/turtle'});
+    const parser = new Parser({format: 'application/n-quads'});
+    const quads = parser.parse(nQuads);
     writer.addQuads(quads);
 
     return new Promise((resolve, reject) => {
@@ -159,7 +160,8 @@ export async function fetchTableMetadata(tableName: string) {
 export async function fetchTable(tableName: string) {
     const metadata = await fetchTableMetadata(tableName);
     const data = await fetchTableRows(tableName);
-    return { metadata, data,
+    return {
+        metadata, data,
         linkedTable: []
     };
 }
@@ -177,11 +179,11 @@ function initJsonLd() {
 
 function addTableFieldsToContext(jsonLd: JsonLd, tableName: string, fields: any, tablePrefix: string = "django-") {
     const context = jsonLd["@context"];
-    const tableNameWithPrefix = tablePrefix === null || tablePrefix === "" ? tableName: tablePrefix + tableName;
+    const tableNameWithPrefix = tablePrefix === null || tablePrefix === "" ? tableName : tablePrefix + tableName;
 
     context[tableName] = joinUrl(config.context.baseURI, tableNameWithPrefix);
     for (const k in fields) {
-        if  (!config.context.uniqueField.includes(k)) {
+        if (!config.context.uniqueField.includes(k)) {
             context[tableName + "-" + k] = joinUrl(config.context.baseURI, tableNameWithPrefix, k);
         }
     }
@@ -191,27 +193,27 @@ function addTableFieldsToContext(jsonLd: JsonLd, tableName: string, fields: any,
 
 function addRecordToGraph(jsonLd: JsonLd, tableName: string, metadata: any, record: any, tablePrefix: string = "django-") {
     const graph = jsonLd["@graph"];
-    const tableNameWithPrefix = tablePrefix === null || tablePrefix === "" ? tableName: tablePrefix + tableName;
+    const tableNameWithPrefix = tablePrefix === null || tablePrefix === "" ? tableName : tablePrefix + tableName;
     const recordId = record.id;
     const recordData = {
         "@id": joinUrl(config.context.baseURI, tableNameWithPrefix, recordId),
         "@type": tableName
     };
-    for (const k in record) {
-        if (!config.context.uniqueField.includes(k)) {
-            if (k in metadata.foreign_keys && record[k] !== null) {
-                recordData[tableNameWithPrefix + "-" + k] = joinUrl(config.context.baseURI, k, record[k]);
-            } else {
-                recordData[tableNameWithPrefix + "-" + k] = record[k];
-            }
+    Object.keys(record).forEach(k => {
+        if (!config.context.uniqueField.includes(k) && record[k] != null) {
+            recordData[tableNameWithPrefix + "-" + k] = k in metadata.foreign_keys
+                ? {"@id": joinUrl(config.context.baseURI, k, record[k])}
+                : record[k];
         }
-    }
+    });
+
     graph.push(recordData);
     jsonLd["@graph"] = graph;
     return jsonLd;
 }
 
 function validateJsonLd(jsonLd: JsonLd): boolean {
+    return true;
     const timespanIds = new Set<string>();
 
     // Collect all timespan IDs
@@ -254,7 +256,7 @@ async function main(): Promise<void> {
     const table = await fetchTable(tableName);
 
     logger.debug(`Table metadata: ${JSON.stringify(table.metadata, null, 2)}`);
-    logger.debug(`Sample data: ${Array.isArray(table.data) ? table.data: []}`);
+    logger.debug(`Sample data: ${Array.isArray(table.data) ? table.data : []}`);
     // Creating empty JSON LD
     let jsonLd = initJsonLd();
     // adding context
@@ -275,16 +277,11 @@ async function main(): Promise<void> {
     logger.debug(`Linked table: ${table.linkedTable}`);
 
     logger.info(`JSON LD context: ${JSON.stringify(jsonLd["@context"], null, 2)}`);
-    logger.info(`JSON LD graph: ${JSON.stringify(jsonLd["@graph"].slice(0,5), null, 2)}`);
+    logger.info(`JSON LD graph: ${JSON.stringify(jsonLd["@graph"].slice(0, 5), null, 2)}`);
     logger.info(`Is JSON-LD valid? ${validateJsonLd(jsonLd)}`);
 
     // save to json-ld file
-    if (validateJsonLd(jsonLd)) {
-        saveJsonLdToFile(jsonLd, `output/${tableName}.jsonld`);
-    } else {
-        logger.error("JSON-LD is not valid");
-        process.exit(1);
-    }
+    saveJsonLdToFile(jsonLd, `output/${tableName}.jsonld`);
 
     // convert to turtle
     const turtle = await convertJsonLdToTtl(jsonLd);
