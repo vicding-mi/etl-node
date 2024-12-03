@@ -5,7 +5,6 @@ import yargs from 'yargs';
 import {hideBin} from 'yargs/helpers';
 import {config} from './config';
 import {createLogger, format, transports} from 'winston';
-import {json} from "node:stream/consumers";
 
 // Set the log level based on an environment variable or default to 'info'
 const logLevel = process.env.LOG_LEVEL || config.logLevel || 'info';
@@ -42,6 +41,15 @@ const argv = yargs(hideBin(process.argv))
 
 const cliTableName = argv.tableName;
 const recordId = argv.recordId;
+
+interface RelatedTables {
+    [tableName: string]: {
+        distance?: number;
+        incoming?: string[];
+        outgoing?: string[];
+        records?: any[];
+    };
+}
 
 interface JsonLdContext {
     "@vocab": string;
@@ -238,29 +246,6 @@ function isValueInJson(value: string | number | boolean, json: any): boolean {
     return false;
 }
 
-function isKeyInJson(key: string, json: any, path: string = ''): string {
-    if (json === null || typeof json !== 'object') {
-        return '';
-    }
-
-    for (const k in json) {
-        if (json.hasOwnProperty(k)) {
-            const currentPath = path ? `${path}.${k}` : k;
-            if (k === key) {
-                return currentPath;
-            }
-            if (typeof json[k] === 'object') {
-                const result = isKeyInJson(key, json[k], currentPath);
-                if (result) {
-                    return result;
-                }
-            }
-        }
-    }
-
-    return '';
-}
-
 function searchJsonForValue(json: any, value: any, path: string = ''): string {
     if (json === value) {
         return path;
@@ -293,21 +278,6 @@ function getObjectFromPath(json: any, path: string): any {
     }
 
     return value;
-}
-
-function updateValueAtPath(json: any, path: string, newValue: any): void {
-    const keys = path.split('.');
-    let value = json;
-
-    for (let i = 0; i < keys.length - 1; i++) {
-        if (value && keys[i] in value) {
-            value = value[keys[i]];
-        } else {
-            throw new Error(`Path not found: ${path}`);
-        }
-    }
-
-    value[keys[keys.length - 1]] = newValue;
 }
 
 function addRecordToGraph(
@@ -353,45 +323,16 @@ function addRecordToGraph(
         const value2 = keyTuple[1][1];
         const path1: string = searchJsonForValue(jsonLd, value2);
         const path2: string = searchJsonForValue(jsonLd, value1);
-        // console.log("key1: ", key1, `path1: "${path1}"`, `value1: "${value1}"`);
-        // console.log("key2: ", key2, "path2: ", path2, "value2: ", value2);
-        // process.exit(1);
         const obj1 = getObjectFromPath(jsonLd, path1.split(".").slice(0, 2).join("."));
         const obj2 = getObjectFromPath(jsonLd, path2.split(".").slice(0, 2).join("."));
         if (obj1 && obj2) {
-            // console.log("obj1: ", obj1, "obj2: ", obj2);
-            // console.log(typeof obj1, typeof obj2);
             obj1[key1] = {"@id": value1};
             obj2[key2] = {"@id": value2};
         }
     }
 
-
     jsonLd["@graph"] = graph;
     return jsonLd;
-}
-
-function validateJsonLd(jsonLd: JsonLd): boolean {
-    return true;
-    const timespanIds = new Set<string>();
-
-    // Collect all timespan IDs
-    for (const item of jsonLd["@graph"]) {
-        if (item["@type"] === "timespan") {
-            timespanIds.add(item["@id"]);
-        }
-    }
-
-    // Check if polity-timespan links to a valid timespan ID
-    for (const item of jsonLd["@graph"]) {
-        if (item["@type"] === "polity" && item["polity-timespan"]) {
-            if (!timespanIds.has(item["polity-timespan"])) {
-                return false;
-            }
-        }
-    }
-
-    return true;
 }
 
 function saveJsonLdToFile(jsonLd: JsonLd, filePath: string): void {
@@ -408,100 +349,6 @@ function validTtl(ttl: string): boolean {
         console.error('Invalid TTL data:', error);
         return false;
     }
-}
-
-// async function test(): Promise<void> {
-//     const tablePrefix = "";
-//     const table = await fetchTable(tableName);
-//
-//     logger.debug(`Table metadata: ${JSON.stringify(table.metadata, null, 2)}`);
-//     logger.debug(`Sample data: ${Array.isArray(table.data) ? table.data : []}`);
-//     // Creating empty JSON LD
-//     let jsonLd = initJsonLd();
-//     // adding context
-//     jsonLd = addTableFieldsToContext(jsonLd, tableName, table.metadata.fields, tablePrefix);
-//     // adding records
-//     for (const record of table.data) {
-//         jsonLd = addRecordToGraph(jsonLd, tableName, table.metadata, record, tablePrefix);
-//     }
-//     // finding linked table
-//     for (const t in table.metadata.foreign_keys) {
-//         table.linkedTable.push(t);
-//         let linkedTable = await fetchTable(t);
-//         jsonLd = addTableFieldsToContext(jsonLd, t, linkedTable.metadata.fields, tablePrefix);
-//         for (const record of linkedTable.data) {
-//             jsonLd = addRecordToGraph(jsonLd, t, linkedTable.metadata, record, tablePrefix);
-//         }
-//     }
-//     logger.debug(`Linked table: ${table.linkedTable}`);
-//
-//     logger.info(`JSON LD context: ${JSON.stringify(jsonLd["@context"], null, 2)}`);
-//     logger.info(`JSON LD graph: ${JSON.stringify(jsonLd["@graph"].slice(0, 5), null, 2)}`);
-//     logger.info(`Is JSON-LD valid? ${validateJsonLd(jsonLd)}`);
-//
-//     // save to json-ld file
-//     saveJsonLdToFile(jsonLd, `${config.outputDir}/${config.outputJsonLd}`);
-//
-//     // convert to turtle
-//     const turtle = await convertJsonLdToTtl(jsonLd);
-//
-//     // save to ttl file
-//     if (validTtl(turtle)) {
-//         fs.writeFileSync(`${config.outputDir}/${config.outputRdf}`, turtle, 'utf8');
-//     } else {
-//         logger.error("TTL is not valid");
-//         process.exit(1);
-//     }
-// }
-
-// async function main() {
-//     const tablePrefix: string = "";
-//     const tables = await getAllEndpoints();
-//
-//     // init JSON-LD with context
-//     let jsonLd = initJsonLd();
-//
-//     // adding records from main tables
-//     for (const tableName in tables) {
-//         if (!config.context.stopTables.includes(tableName) && !config.context.middleTables.includes(tableName)) {
-//             logger.info(`Processing table: ${tableName}`);
-//             const table = await fetchTable(tableName);
-//             jsonLd = addTableFieldsToContext(jsonLd, tableName, table.metadata.fields, tablePrefix);
-//             for (const record of table.data) {
-//                 jsonLd = addRecordToGraph(jsonLd, tableName, table.metadata, record, tablePrefix);
-//             }
-//         }
-//     }
-//
-//     // adding records from middle tables
-//     // for (const tableName in tables) {
-//     //     if (config.middleTables.includes(tableName)) {
-//     //         logger.info(`Processing middle table: ${tableName}`);
-//     //         const table = await fetchTable(tableName);
-//     //         jsonLd = addTableFieldsToContext(jsonLd, tableName, table.metadata.fields, tablePrefix);
-//     //         for (const record of table.data) {
-//     //             jsonLd = addRecordToGraph(jsonLd, tableName, table.metadata, record, tablePrefix);
-//     //         }
-//     //     }
-//     // }
-//
-//     saveJsonLdToFile(jsonLd, "output/output.jsonld");
-//     const turtle = await convertJsonLdToTtl(jsonLd);
-//     if (validTtl(turtle)) {
-//         fs.writeFileSync("output/output.ttl", turtle, 'utf8');
-//     } else {
-//         logger.error("TTL is not valid");
-//         process.exit(1);
-//     }
-// }
-
-interface RelatedTables {
-    [tableName: string]: {
-        distance?: number;
-        incoming?: string[];
-        outgoing?: string[];
-        records?: any[];
-    };
 }
 
 async function getRelatedTables(tableName: string, tables: any): Promise<any> {
@@ -530,7 +377,6 @@ async function getRelatedTables(tableName: string, tables: any): Promise<any> {
     return relatedTables;
 }
 
-// main().then(r => {logger.info("Done")}).catch(e => {console.error(e)});
 async function getRelatedTablesWithDistance(tableName: string, tables: any, distance: number, relatedTables: RelatedTables = {}): Promise<RelatedTables> {
     if (distance < 1) {
         return relatedTables;
@@ -554,14 +400,14 @@ async function getLastEntries(dict: any, sliceSize: number): Promise<{ [key: str
     return Object.fromEntries(slice);
 }
 
-async function mainR2R(tableName: string, distance: number = 1): Promise<void> {
+async function main(tableName: string, distance: number = 1): Promise<void> {
     const tablePrefix: string = "";
     const tables: any = await getAllEndpoints();
     const tableKeys: string[] = Object.keys(tables);
     logger.info("There are " + tableKeys.length + " tables");
     const relatedTables: RelatedTables = await getRelatedTablesWithDistance(tableName, tables, distance);
     logger.info("There are " + Object.keys(relatedTables).length + " related tables with distance " + distance);
-    logger.info(JSON.stringify(relatedTables, null, 2));
+    logger.debug(JSON.stringify(relatedTables, null, 2));
     logger.info("Adding to graph");
 
     // init JSON-LD with context
@@ -608,7 +454,6 @@ async function mainR2R(tableName: string, distance: number = 1): Promise<void> {
             logger.info(`Processing middle table: "${relatedTableName}"`);
             const table = cacheRelatedTables[relatedTableName];
             jsonLd = addTableFieldsToContext(jsonLd, relatedTableName, table.metadata.fields, tablePrefix);
-            const currentContext = getLastEntries(jsonLd["@context"], 2)
             for (const record of table.data) {
                 // TODO: middle table follow different rules
                 jsonLd = addRecordToGraph(jsonLd, relatedTableName, relatedTables, record, tablePrefix);
@@ -626,4 +471,6 @@ async function mainR2R(tableName: string, distance: number = 1): Promise<void> {
     }
 }
 
-mainR2R(cliTableName, 3)
+main(cliTableName, 3)
+    .then(r => logger.info("Done"))
+    .catch(e => logger.error(e));
