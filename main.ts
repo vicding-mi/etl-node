@@ -1,10 +1,11 @@
 import fs from 'fs';
 import jsonld from 'jsonld';
-import {Writer, Parser} from 'n3';
+import {Parser, Writer} from 'n3';
 import yargs from 'yargs';
 import {hideBin} from 'yargs/helpers';
 import {config} from './config';
 import {createLogger, format, transports} from 'winston';
+import {json} from "node:stream/consumers";
 
 // Set the log level based on an environment variable or default to 'info'
 const logLevel = process.env.LOG_LEVEL || config.logLevel || 'info';
@@ -23,10 +24,30 @@ const logger = createLogger({
     ]
 });
 
+// Parse command line arguments
+const argv = yargs(hideBin(process.argv))
+    .option('tableName', {
+        alias: 't',
+        type: 'string',
+        description: 'Name of the table',
+        demandOption: false
+    })
+    .option('recordId', {
+        alias: 'r',
+        type: 'string',
+        description: 'ID of the record',
+        demandOption: false
+    })
+    .argv;
+
+const cliTableName = argv.tableName;
+const recordId = argv.recordId;
+
 interface JsonLdContext {
     "@vocab": string;
     id: string;
     type: string;
+
     [key: string]: string;
 }
 
@@ -43,6 +64,18 @@ interface JsonLd {
 }
 
 const apiBaseUrl: string = config.api.baseURL;
+
+async function getAllEndpoints(): Promise<any> {
+    const response = await fetch(apiBaseUrl);
+    if (!response.ok) {
+        throw new Error(`Error fetching data: ${response.statusText}`);
+    }
+    const tables = await response.json();
+    for (const stopTable of config.context.stopTables) {
+        delete tables[stopTable];
+    }
+    return tables;
+}
 
 // convert JSON-LD to Turtle
 async function convertJsonLdToTtl(jsonLd: any): Promise<string> {
@@ -69,25 +102,6 @@ async function convertJsonLdToTtl(jsonLd: any): Promise<string> {
     });
 }
 
-// Parse command line arguments
-const argv = yargs(hideBin(process.argv))
-    .option('tableName', {
-        alias: 't',
-        type: 'string',
-        description: 'Name of the table',
-        demandOption: true
-    })
-    .option('recordId', {
-        alias: 'r',
-        type: 'string',
-        description: 'ID of the record',
-        demandOption: false
-    })
-    .argv;
-
-const tableName = argv.tableName;
-const recordId = argv.recordId;
-
 export function joinUrl(baseUrl: string, ...paths: string[]): string {
     return [baseUrl, ...paths]
         .map((part, index) => {
@@ -101,16 +115,16 @@ export function joinUrl(baseUrl: string, ...paths: string[]): string {
         .join('/');
 }
 
-// export async function fetchRecordById(tableName: string, id: string): Promise<any> {
-//     const url = joinUrl(apiBaseUrl, tableName.toLowerCase(), id);
-//     const response = await fetch(url);
-//
-//     if (!response.ok) {
-//         throw new Error(`Error fetching data: ${response.statusText}`);
-//     }
-//
-//     return response.json();
-// }
+export async function fetchRecordById(tableName: string, id: string): Promise<any> {
+    const url = joinUrl(apiBaseUrl, tableName.toLowerCase(), id);
+    const response = await fetch(url);
+
+    if (!response.ok) {
+        throw new Error(`Error fetching data: ${response.statusText}`);
+    }
+
+    return response.json();
+}
 
 export async function fetchTableInBatch(tableName: string, page?: number, pageSize?: number): Promise<any> {
     const url = joinUrl(apiBaseUrl, tableName.toLowerCase());
@@ -127,7 +141,7 @@ export async function fetchTableInBatch(tableName: string, page?: number, pageSi
     const response = await fetch(`${url}?${params.toString()}`);
 
     if (!response.ok) {
-        throw new Error(`Error fetching data: ${response.statusText}`);
+        throw new Error(`Error fetching data: ${response.statusText}, ${url}`);
     }
 
     return response.json();
@@ -181,17 +195,128 @@ function addTableFieldsToContext(jsonLd: JsonLd, tableName: string, fields: any,
     const context = jsonLd["@context"];
     const tableNameWithPrefix = tablePrefix === null || tablePrefix === "" ? tableName : tablePrefix + tableName;
 
-    context[tableName] = joinUrl(config.context.baseURI, tableNameWithPrefix);
-    for (const k in fields) {
-        if (!config.context.uniqueField.includes(k)) {
-            context[tableName + "-" + k] = joinUrl(config.context.baseURI, tableNameWithPrefix, k);
+    if (!config.context.middleTables.includes(tableName)) {
+        context[tableName] = joinUrl(config.context.baseURI, tableNameWithPrefix);
+        for (const k in fields) {
+            if (!config.context.uniqueField.includes(k)) {
+                context[tableName + "-" + k] = joinUrl(config.context.baseURI, tableNameWithPrefix, k);
+            }
         }
+    } else {
+        const keyTuple = [];
+        for (const k in fields) {
+            if (!config.context.uniqueField.includes(k)) {
+                keyTuple.push([`${k}-${tableName}`, joinUrl(config.context.baseURI, k, tableNameWithPrefix)]);
+            }
+        }
+        context[keyTuple[0][0]] = keyTuple[1][1];
+        context[keyTuple[1][0]] = keyTuple[0][1];
     }
+
     jsonLd["@context"] = context;
     return jsonLd;
 }
 
-function addRecordToGraph(jsonLd: JsonLd, tableName: string, metadata: any, record: any, tablePrefix: string = "django-") {
+function isValueInJson(value: string | number | boolean, json: any): boolean {
+    if (json === null || typeof json !== 'object') {
+        return false;
+    }
+
+    for (const key in json) {
+        if (json.hasOwnProperty(key)) {
+            if (json[key] === value) {
+                return true;
+            }
+            if (typeof json[key] === 'object') {
+                if (isValueInJson(value, json[key])) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+function isKeyInJson(key: string, json: any, path: string = ''): string {
+    if (json === null || typeof json !== 'object') {
+        return '';
+    }
+
+    for (const k in json) {
+        if (json.hasOwnProperty(k)) {
+            const currentPath = path ? `${path}.${k}` : k;
+            if (k === key) {
+                return currentPath;
+            }
+            if (typeof json[k] === 'object') {
+                const result = isKeyInJson(key, json[k], currentPath);
+                if (result) {
+                    return result;
+                }
+            }
+        }
+    }
+
+    return '';
+}
+
+function searchJsonForValue(json: any, value: any, path: string = ''): string {
+    if (json === value) {
+        return path;
+    }
+
+    if (typeof json === 'object' && json !== null) {
+        for (const key in json) {
+            if (json.hasOwnProperty(key)) {
+                const result = searchJsonForValue(json[key], value, path ? `${path}.${key}` : key);
+                if (result) {
+                    return result;
+                }
+            }
+        }
+    }
+
+    return '';
+}
+
+function getObjectFromPath(json: any, path: string): any {
+    const keys = path.split('.');
+    let value = json;
+
+    for (const key of keys) {
+        if (value && key in value) {
+            value = value[key];
+        } else {
+            return undefined;
+        }
+    }
+
+    return value;
+}
+
+function updateValueAtPath(json: any, path: string, newValue: any): void {
+    const keys = path.split('.');
+    let value = json;
+
+    for (let i = 0; i < keys.length - 1; i++) {
+        if (value && keys[i] in value) {
+            value = value[keys[i]];
+        } else {
+            throw new Error(`Path not found: ${path}`);
+        }
+    }
+
+    value[keys[keys.length - 1]] = newValue;
+}
+
+function addRecordToGraph(
+    jsonLd: JsonLd,
+    tableName: string,
+    relatedTables: any,
+    record: any,
+    tablePrefix: string = "django-",
+    checkLinkage: boolean = true): JsonLd {
     const graph = jsonLd["@graph"];
     const tableNameWithPrefix = tablePrefix === null || tablePrefix === "" ? tableName : tablePrefix + tableName;
     const recordId = record.id;
@@ -199,15 +324,49 @@ function addRecordToGraph(jsonLd: JsonLd, tableName: string, metadata: any, reco
         "@id": joinUrl(config.context.baseURI, tableNameWithPrefix, recordId),
         "@type": tableName
     };
-    Object.keys(record).forEach(k => {
-        if (!config.context.uniqueField.includes(k) && record[k] != null) {
-            recordData[tableNameWithPrefix + "-" + k] = k in metadata.foreign_keys
-                ? {"@id": joinUrl(config.context.baseURI, k, record[k])}
-                : record[k];
-        }
-    });
 
-    graph.push(recordData);
+    if (!config.context.middleTables.includes(tableName)) {
+        Object.keys(record).forEach(k => {
+            if (!checkLinkage || isValueInJson(recordData["@id"], relatedTables)) {
+                if (!config.context.uniqueField.includes(k) && record[k]) {
+                    recordData[tableNameWithPrefix + "-" + k] = (relatedTables[tableName].outgoing.includes(k))
+                        ? {"@id": joinUrl(config.context.baseURI, k, record[k])}
+                        : record[k];
+                }
+            }
+        });
+        if (!relatedTables[tableName].records) {
+            relatedTables[tableName].records = [];
+        }
+        relatedTables[tableName].records.push(recordData["@id"]);
+        graph.push(recordData);
+    } else {
+        const keyTuple = [];
+        for (const k in record) {
+            if (!config.context.uniqueField.includes(k)) {
+                keyTuple.push([`${k}-${tableName}`, joinUrl(config.context.baseURI, k, record[k])]);
+            }
+        }
+        const key1: string = keyTuple[0][0];
+        const key2: string = keyTuple[1][0];
+        const value1 = keyTuple[0][1];
+        const value2 = keyTuple[1][1];
+        const path1: string = searchJsonForValue(jsonLd, value2);
+        const path2: string = searchJsonForValue(jsonLd, value1);
+        // console.log("key1: ", key1, `path1: "${path1}"`, `value1: "${value1}"`);
+        // console.log("key2: ", key2, "path2: ", path2, "value2: ", value2);
+        // process.exit(1);
+        const obj1 = getObjectFromPath(jsonLd, path1.split(".").slice(0, 2).join("."));
+        const obj2 = getObjectFromPath(jsonLd, path2.split(".").slice(0, 2).join("."));
+        if (obj1 && obj2) {
+            // console.log("obj1: ", obj1, "obj2: ", obj2);
+            // console.log(typeof obj1, typeof obj2);
+            obj1[key1] = {"@id": value1};
+            obj2[key2] = {"@id": value2};
+        }
+    }
+
+
     jsonLd["@graph"] = graph;
     return jsonLd;
 }
@@ -251,50 +410,220 @@ function validTtl(ttl: string): boolean {
     }
 }
 
-async function main(): Promise<void> {
-    const tablePrefix = "";
-    const table = await fetchTable(tableName);
+// async function test(): Promise<void> {
+//     const tablePrefix = "";
+//     const table = await fetchTable(tableName);
+//
+//     logger.debug(`Table metadata: ${JSON.stringify(table.metadata, null, 2)}`);
+//     logger.debug(`Sample data: ${Array.isArray(table.data) ? table.data : []}`);
+//     // Creating empty JSON LD
+//     let jsonLd = initJsonLd();
+//     // adding context
+//     jsonLd = addTableFieldsToContext(jsonLd, tableName, table.metadata.fields, tablePrefix);
+//     // adding records
+//     for (const record of table.data) {
+//         jsonLd = addRecordToGraph(jsonLd, tableName, table.metadata, record, tablePrefix);
+//     }
+//     // finding linked table
+//     for (const t in table.metadata.foreign_keys) {
+//         table.linkedTable.push(t);
+//         let linkedTable = await fetchTable(t);
+//         jsonLd = addTableFieldsToContext(jsonLd, t, linkedTable.metadata.fields, tablePrefix);
+//         for (const record of linkedTable.data) {
+//             jsonLd = addRecordToGraph(jsonLd, t, linkedTable.metadata, record, tablePrefix);
+//         }
+//     }
+//     logger.debug(`Linked table: ${table.linkedTable}`);
+//
+//     logger.info(`JSON LD context: ${JSON.stringify(jsonLd["@context"], null, 2)}`);
+//     logger.info(`JSON LD graph: ${JSON.stringify(jsonLd["@graph"].slice(0, 5), null, 2)}`);
+//     logger.info(`Is JSON-LD valid? ${validateJsonLd(jsonLd)}`);
+//
+//     // save to json-ld file
+//     saveJsonLdToFile(jsonLd, `${config.outputDir}/${config.outputJsonLd}`);
+//
+//     // convert to turtle
+//     const turtle = await convertJsonLdToTtl(jsonLd);
+//
+//     // save to ttl file
+//     if (validTtl(turtle)) {
+//         fs.writeFileSync(`${config.outputDir}/${config.outputRdf}`, turtle, 'utf8');
+//     } else {
+//         logger.error("TTL is not valid");
+//         process.exit(1);
+//     }
+// }
 
-    logger.debug(`Table metadata: ${JSON.stringify(table.metadata, null, 2)}`);
-    logger.debug(`Sample data: ${Array.isArray(table.data) ? table.data : []}`);
-    // Creating empty JSON LD
-    let jsonLd = initJsonLd();
-    // adding context
-    jsonLd = addTableFieldsToContext(jsonLd, tableName, table.metadata.fields, tablePrefix);
-    // adding records
-    for (const record of table.data) {
-        jsonLd = addRecordToGraph(jsonLd, tableName, table.metadata, record, tablePrefix);
+// async function main() {
+//     const tablePrefix: string = "";
+//     const tables = await getAllEndpoints();
+//
+//     // init JSON-LD with context
+//     let jsonLd = initJsonLd();
+//
+//     // adding records from main tables
+//     for (const tableName in tables) {
+//         if (!config.context.stopTables.includes(tableName) && !config.context.middleTables.includes(tableName)) {
+//             logger.info(`Processing table: ${tableName}`);
+//             const table = await fetchTable(tableName);
+//             jsonLd = addTableFieldsToContext(jsonLd, tableName, table.metadata.fields, tablePrefix);
+//             for (const record of table.data) {
+//                 jsonLd = addRecordToGraph(jsonLd, tableName, table.metadata, record, tablePrefix);
+//             }
+//         }
+//     }
+//
+//     // adding records from middle tables
+//     // for (const tableName in tables) {
+//     //     if (config.middleTables.includes(tableName)) {
+//     //         logger.info(`Processing middle table: ${tableName}`);
+//     //         const table = await fetchTable(tableName);
+//     //         jsonLd = addTableFieldsToContext(jsonLd, tableName, table.metadata.fields, tablePrefix);
+//     //         for (const record of table.data) {
+//     //             jsonLd = addRecordToGraph(jsonLd, tableName, table.metadata, record, tablePrefix);
+//     //         }
+//     //     }
+//     // }
+//
+//     saveJsonLdToFile(jsonLd, "output/output.jsonld");
+//     const turtle = await convertJsonLdToTtl(jsonLd);
+//     if (validTtl(turtle)) {
+//         fs.writeFileSync("output/output.ttl", turtle, 'utf8');
+//     } else {
+//         logger.error("TTL is not valid");
+//         process.exit(1);
+//     }
+// }
+
+interface RelatedTables {
+    [tableName: string]: {
+        distance?: number;
+        incoming?: string[];
+        outgoing?: string[];
+        records?: any[];
+    };
+}
+
+async function getRelatedTables(tableName: string, tables: any): Promise<any> {
+    const relatedTables: RelatedTables = {};
+    relatedTables[tableName] = {incoming: [], outgoing: []};
+
+    // Add outgoing foreign keys
+    const outgoing: string[] = [];
+    const tableMetadata = await fetchTableMetadata(tableName);
+    for (const relatedTable in tableMetadata.foreign_keys) {
+        outgoing.push(relatedTable);
     }
-    // finding linked table
-    for (const t in table.metadata.foreign_keys) {
-        table.linkedTable.push(t);
-        let linkedTable = await fetchTable(t);
-        jsonLd = addTableFieldsToContext(jsonLd, t, linkedTable.metadata.fields, tablePrefix);
-        for (const record of linkedTable.data) {
-            jsonLd = addRecordToGraph(jsonLd, t, linkedTable.metadata, record, tablePrefix);
+    // relatedTables.tableName.outgoing = outgoing;
+    relatedTables[tableName].outgoing = outgoing;
+
+    // Add incoming foreign keys
+    const incoming: string[] = [];
+    for (const table in tables) {
+        const tableMetadata = await fetchTableMetadata(table);
+        if (tableMetadata.foreign_keys[tableName]) {
+            incoming.push(table);
         }
     }
-    logger.debug(`Linked table: ${table.linkedTable}`);
+    relatedTables[tableName].incoming = incoming;
 
-    logger.info(`JSON LD context: ${JSON.stringify(jsonLd["@context"], null, 2)}`);
-    logger.info(`JSON LD graph: ${JSON.stringify(jsonLd["@graph"].slice(0, 5), null, 2)}`);
-    logger.info(`Is JSON-LD valid? ${validateJsonLd(jsonLd)}`);
+    return relatedTables;
+}
 
-    // save to json-ld file
-    saveJsonLdToFile(jsonLd, `output/${tableName}.jsonld`);
+// main().then(r => {logger.info("Done")}).catch(e => {console.error(e)});
+async function getRelatedTablesWithDistance(tableName: string, tables: any, distance: number, relatedTables: RelatedTables = {}): Promise<RelatedTables> {
+    if (distance < 1) {
+        return relatedTables;
+    }
 
-    // convert to turtle
+    const currentRelatedTables = await getRelatedTables(tableName, tables);
+    relatedTables[tableName] = currentRelatedTables[tableName];
+
+    for (const relatedTable of [...currentRelatedTables[tableName].incoming, ...currentRelatedTables[tableName].outgoing]) {
+        if (!relatedTables[relatedTable]) {
+            await getRelatedTablesWithDistance(relatedTable, tables, distance - 1, relatedTables);
+        }
+    }
+
+    return relatedTables;
+}
+
+async function getLastEntries(dict: any, sliceSize: number): Promise<{ [key: string]: any }> {
+    const entries = Object.entries(dict);
+    const slice = entries.slice(sliceSize);
+    return Object.fromEntries(slice);
+}
+
+async function mainR2R(tableName: string, distance: number = 1): Promise<void> {
+    const tablePrefix: string = "";
+    const tables: any = await getAllEndpoints();
+    const tableKeys: string[] = Object.keys(tables);
+    logger.info("There are " + tableKeys.length + " tables");
+    const relatedTables: RelatedTables = await getRelatedTablesWithDistance(tableName, tables, distance);
+    logger.info("There are " + Object.keys(relatedTables).length + " related tables with distance " + distance);
+    logger.info(JSON.stringify(relatedTables, null, 2));
+    logger.info("Adding to graph");
+
+    // init JSON-LD with context
+    let jsonLd = initJsonLd();
+
+    // pre-fetch all the related tables
+    const cacheRelatedTables = {};
+    for (const relatedTableName of Object.keys(relatedTables)) {
+        if (!cacheRelatedTables[relatedTableName]) {
+            cacheRelatedTables[relatedTableName] = await fetchTable(relatedTableName);
+        }
+    }
+
+    // adding records from main tables
+    for (const relatedTableName of Object.keys(relatedTables)) {
+        if (config.context.mainEntryTables.includes(relatedTableName)) {
+            logger.info(`Processing main table: "${relatedTableName}"`);
+            const table = cacheRelatedTables[relatedTableName];
+            jsonLd = addTableFieldsToContext(jsonLd, relatedTableName, table.metadata.fields, tablePrefix);
+            // Every entry in the starting table is a starting point
+            for (const record of table.data) {
+                jsonLd = addRecordToGraph(jsonLd, relatedTableName, relatedTables, record, tablePrefix, false);
+            }
+        }
+
+    }
+
+    // resource tables added after main tables, as they depend on the main tables
+    for (const relatedTableName of Object.keys(relatedTables)) {
+        if (!config.context.mainEntryTables.includes(relatedTableName) && !config.context.stopTables.includes(relatedTableName) && !config.context.middleTables.includes(relatedTableName)) {
+            logger.info(`Processing resource table: "${relatedTableName}"`);
+            const table = cacheRelatedTables[relatedTableName];
+            jsonLd = addTableFieldsToContext(jsonLd, relatedTableName, table.metadata.fields, tablePrefix);
+            for (const record of table.data) {
+                // TODO: change flase to true after debugging
+                jsonLd = addRecordToGraph(jsonLd, relatedTableName, relatedTables, record, tablePrefix, false);
+            }
+        }
+    }
+
+    // middle tables added last, as they depend on both resource tables and main tables
+    for (const relatedTableName of Object.keys(relatedTables)) {
+        if (config.context.middleTables.includes(relatedTableName)) {
+            logger.info(`Processing middle table: "${relatedTableName}"`);
+            const table = cacheRelatedTables[relatedTableName];
+            jsonLd = addTableFieldsToContext(jsonLd, relatedTableName, table.metadata.fields, tablePrefix);
+            const currentContext = getLastEntries(jsonLd["@context"], 2)
+            for (const record of table.data) {
+                // TODO: middle table follow different rules
+                jsonLd = addRecordToGraph(jsonLd, relatedTableName, relatedTables, record, tablePrefix);
+            }
+        }
+    }
+
+    saveJsonLdToFile(jsonLd, "output/output.jsonld");
     const turtle = await convertJsonLdToTtl(jsonLd);
-
-    // save to ttl file
     if (validTtl(turtle)) {
-        fs.writeFileSync(`output/${tableName}.ttl`, turtle, 'utf8');
+        fs.writeFileSync("output/output.ttl", turtle, 'utf8');
     } else {
         logger.error("TTL is not valid");
         process.exit(1);
     }
 }
 
-main().catch(error => {
-    logger.error("Error:", error);
-});
+mainR2R(cliTableName, 3)

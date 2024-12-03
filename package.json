@@ -5,14 +5,15 @@
   "main": "main.ts",
   "scripts": {
     "test": "tsx --watch test.ts -t polity -r 60d80217-94d7-4354-b9c5-6426ece853dc",
-    "polity": "tsx --watch main.ts -t polity -r 60d80217-94d7-4354-b9c5-6426ece853dc",
-    "timespan": "tsx --watch main.ts -t timespan -r 467160c7-724f-4151-89d6-8b15325fc081"
+    "polity": "tsx --watch main.ts -t polity"
   },
   "dependencies": {
     "@types/node": "^22.9.0",
     "jsonld": "^8.3.2",
     "n3": "^1.23.0",
+    "node-graphviz": "^0.1.1",
     "npm": "^10.9.0",
+    "sharp": "^0.33.5",
     "toml": "^3.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
