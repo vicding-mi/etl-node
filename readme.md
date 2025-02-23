@@ -12,3 +12,5 @@ The output consists of a `json-ld` file and a `ttl` file.
 ## How to use
 * install the packages
 * either `npm run polity` or `npx tsx <tableName>` to start from your desired table.
+
+### 

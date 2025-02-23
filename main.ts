@@ -4,7 +4,7 @@ import {Parser, Writer} from 'n3';
 import yargs from 'yargs';
 import {hideBin} from 'yargs/helpers';
 import {config} from './config';
-import {createLogger, format, transports} from 'winston';
+import {createLogger, exitOnError, format, transports} from 'winston';
 
 // Set the log level based on an environment variable or default to 'info'
 const logLevel = process.env.LOG_LEVEL || config.logLevel || 'info';
@@ -149,7 +149,7 @@ export async function fetchTableInBatch(tableName: string, page?: number, pageSi
     const response = await fetch(`${url}?${params.toString()}`);
 
     if (!response.ok) {
-        throw new Error(`Error fetching data: ${response.statusText}, ${url}`);
+        throw new Error(`Error fetching ${tableName}: ${response.statusText}, ${url}`);
     }
 
     return response.json();
@@ -377,14 +377,33 @@ async function getRelatedTables(tableName: string, tables: any): Promise<any> {
     return relatedTables;
 }
 
+const tableNameMap: { [key: string]: string } = {
+    "ccode": "countrycode"
+    // Add more mappings as needed
+};
+
+function replaceTableName(tableName: string): string {
+
+
+    if (tableName in tableNameMap) {
+        logger.info(`Changing table name from ${tableName} to ${tableNameMap[tableName]}`);
+        return tableNameMap[tableName];
+    }
+
+    return tableName;
+}
+
 async function getRelatedTablesWithDistance(tableName: string, tables: any, distance: number, relatedTables: RelatedTables = {}): Promise<RelatedTables> {
+    tableName = replaceTableName(tableName);
     if (distance < 1) {
         return relatedTables;
     }
 
     const currentRelatedTables = await getRelatedTables(tableName, tables);
+    logger.info("Current related tables: " + JSON.stringify(currentRelatedTables, null, 2));
     relatedTables[tableName] = currentRelatedTables[tableName];
 
+    logger.info("Current outgoing: " + currentRelatedTables[tableName].outgoing);
     for (const relatedTable of [...currentRelatedTables[tableName].incoming, ...currentRelatedTables[tableName].outgoing]) {
         if (!relatedTables[relatedTable]) {
             await getRelatedTablesWithDistance(relatedTable, tables, distance - 1, relatedTables);
@@ -404,9 +423,8 @@ async function main(tableName: string, distance: number = 1): Promise<void> {
     const tablePrefix: string = "";
     const tables: any = await getAllEndpoints();
     const tableKeys: string[] = Object.keys(tables);
-    logger.info("There are " + tableKeys.length + " tables");
     const relatedTables: RelatedTables = await getRelatedTablesWithDistance(tableName, tables, distance);
-    logger.info("There are " + Object.keys(relatedTables).length + " related tables with distance " + distance);
+    logger.info("Working on " + Object.keys(relatedTables).length + " related tables out of " + tableKeys.length + " related tables with distance " + distance);
     logger.debug(JSON.stringify(relatedTables, null, 2));
     logger.info("Adding to graph");
 
@@ -472,5 +490,4 @@ async function main(tableName: string, distance: number = 1): Promise<void> {
 }
 
 main(cliTableName, 3)
-    .then(r => logger.info("Done"))
-    .catch(e => logger.error(e));
+    .then(r => logger.info("Done"));

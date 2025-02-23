@@ -5,7 +5,8 @@
   "main": "main.ts",
   "scripts": {
     "test": "tsx --watch test.ts -t polity -r 60d80217-94d7-4354-b9c5-6426ece853dc",
-    "polity": "tsx --watch main.ts -t polity"
+    "polity": "tsx --watch main.ts -t polity",
+    "location": "tsx --watch main.ts -t location"
   },
   "dependencies": {
     "@types/node": "^22.9.0",
