@@ -113,6 +113,9 @@ async function convertJsonLdToTtl(jsonLd: any): Promise<string> {
 export function joinUrl(baseUrl: string, ...paths: string[]): string {
     return [baseUrl, ...paths]
         .map((part, index) => {
+            if (part === null || part === undefined) {
+                return '';
+            }
             if (index === 0) {
                 return part.replace(/\/+$/, '');
             } else {
@@ -314,7 +317,12 @@ function addRecordToGraph(
         const keyTuple = [];
         for (const k in record) {
             if (!config.context.uniqueField.includes(k)) {
-                keyTuple.push([`${k}-${tableName}`, joinUrl(config.context.baseURI, k, record[k])]);
+                try {
+                    keyTuple.push([`${k}-${tableName}`, joinUrl(config.context.baseURI, k, record[k])]);
+                } catch (error) {
+                    logger.error(`Error adding record to graph: ${error} ${config.context.baseURI} ${k} ${JSON.stringify(record, null, 2)}`);
+                    throw error;
+                }
             }
         }
         const key1: string = keyTuple[0][0];
@@ -378,7 +386,8 @@ async function getRelatedTables(tableName: string, tables: any): Promise<any> {
 }
 
 const tableNameMap: { [key: string]: string } = {
-    "ccode": "countrycode"
+    "ccode": "countrycode",
+    "lifespan": "timespan",
     // Add more mappings as needed
 };
 
