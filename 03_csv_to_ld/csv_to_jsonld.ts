@@ -1,10 +1,17 @@
-import {fs} from 'fs';
-import {path} from 'path';
-import {csv} from 'csv-parser';
+import * as fs from 'fs';
+import { join } from 'path';
+import csv from 'csv-parser';
 
 const BASE_URI = "http://example.globalise.nl/temp";
-const csvFile = path.join('sample_data', 'locations.csv');
-const jsonldFile = path.join('locations.jsonld');
+const csvFile = join('sample_data', 'locations.csv');
+const jsonldFile = join('locations.jsonld');
+
+// Get the @type from the command-line arguments
+const typeArg = process.argv[2];
+if (!typeArg) {
+    console.error('Error: Please provide a @type as a command-line argument.');
+    process.exit(1);
+}
 
 // Function to read the CSV file and convert it to JSON-LD
 async function convertCsvToJsonLd(): Promise<void> {
@@ -30,6 +37,7 @@ async function convertCsvToJsonLd(): Promise<void> {
             }
         });
         filteredItem['@id'] = `${BASE_URI}/places_csv/row_${index + 1}`;
+        filteredItem['@type'] = `${BASE_URI}/${typeArg}`;
         return filteredItem;
     });
 
