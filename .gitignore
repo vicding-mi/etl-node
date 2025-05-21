@@ -1,6 +1,7 @@
 .idea
 *.log
 node_modules
-dist
-test.ts
-output
+**/dist
+**/test.ts
+01_extraction_from_api/output
+01_extraction_from_api/cow-disk/
