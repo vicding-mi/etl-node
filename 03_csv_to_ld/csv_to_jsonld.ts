@@ -4,7 +4,7 @@ import csv from 'csv-parser';
 
 const BASE_URI = "http://example.globalise.nl/temp";
 const csvFile = join('sample_data', 'locations.csv');
-const jsonldFile = join('locations.jsonld');
+const jsonldFile = join('output', 'locations.jsonld');
 
 // Get the @type from the command-line arguments
 const typeArg = process.argv[2];
