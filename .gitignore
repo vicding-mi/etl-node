@@ -3,6 +3,6 @@
 node_modules
 **/dist
 **/test.ts
+**/sample_data
 01_extraction_from_api/output
 01_extraction_from_api/cow-disk
-01_extraction_from_api/sample_data
