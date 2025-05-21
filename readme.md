@@ -1,16 +1,14 @@
-# ETL trial for Globalise
+# ETL PoC
 
-## Introduction
-This is a trial for ETL process for Globalise. The data source is REST API made from [refdata](https://github.com/globalise-huygens/data-editor-pilot/tree/dbprobe). 
+This repository is a proof of concept for an ETL process for Globalise. The steps in the process are as follows:
+1. Go from Django API to LD (in nodejs) (step in folder `01_extraction_from_api`)
+2. SPARQL to go to a universal table (via communica) (step in folder `02_sparql_to_csv_comunica`)
+3. from csv go to LD (currently in Pythong TODO: convert to nodejs) (step in folder `03_csv_to_ld`)
+4. apply the Takin' mapping (per row?) (via XSLT and communica) (TODO: `where?`)
+5. result = a graph per row (TODO: `where?`)
 
-## Input
-The only data source needed is the REST API. 
+## TODO:
+- [ ] convert the python code to nodejs
+- [ ] add the Takin' mapping
+- [ ] workflow system to check: n8n?
 
-## Output
-The output consists of a `json-ld` file and a `ttl` file. 
-
-## How to use
-* install the packages
-* either `npm run polity` or `npx tsx <tableName>` to start from your desired table.
-
-### 
