@@ -8,6 +8,7 @@
     "location": "tsx --watch 01_extraction_from_api/main.ts -t location"
   },
   "dependencies": {
+    "@comunica/query-sparql": "^4.2.0",
     "@types/node": "^22.9.0",
     "jsonld": "^8.3.2",
     "n3": "^1.23.0",
