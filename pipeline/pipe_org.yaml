@@ -1,0 +1,35 @@
+steps:
+  - step: "django.read"
+    endpoint: "http://localhost/api/{location}/"
+    entity:
+      location: "location"
+    output-trace: "ttl"
+  - step = "sparql.select"
+    - query="""
+    SELECT * {
+      ?ts a <http://example.globalise.nl/temp/timespan>;
+        <http://example.globalise.nl/temp/timespan/year_earliest_begin> ?yeb;
+        <http://example.globalise.nl/temp/timespan/year_earliest_end> ?yee;
+        <http://example.globalise.nl/temp/timespan/year_latest_begin> ?ylb;
+        <http://example.globalise.nl/temp/timespan/year_latest_end> ?yle;
+    }
+    """
+    - output-trace="csv"
+  - step = "csv.map"
+    # so we've a CSV file with the header row and one data row
+    - step = "XSLT"
+      - mode = "transparent" # means the outout of this step is ignored, i.e. the next step gets the same CSV row
+      - stylesheet = "toSPARQL.xsl"
+      - param = "fields:fields.xml" # syntax = <param name>:<param value might contain :>
+      - output-trace = "sparql"
+      - output-store = "./tmp/row-{$row}.sparql"
+    # we contuinue with the CSV row
+    - step ="CSVtoRDF"
+        - entity = "location"
+        - output-trace="ttl"
+    - step = "sparql.construct"
+      - query = "./tmp/row-{$row}.sparql"
+      - output-trace="ttl"
+      - output-store= "./res/row-{$row}.ttl"
+  
+  

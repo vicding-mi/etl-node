@@ -1,0 +1,6 @@
+steps:
+  - step: "django.read"
+    endpoint: "http://localhost/api/{location}/"
+    entity:
+      location: "location"
+    output-trace: "ttl"
