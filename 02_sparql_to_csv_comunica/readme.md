@@ -40,3 +40,17 @@ docker compose up -d
 ```bash
 npx tsx test.ts
 ```
+
+## how to run comunica with docker
+```shell
+docker run -it --rm \
+  -v $(pwd)/sample_data:/data \
+  comunica/comunica-sparql \
+  /data/locations.ttl -f /data/query.sparql
+```
+
+```shell
+docker run -it --rm comunica/query-sparql \
+  https://fragments.dbpedia.org/2015-10/en \
+  "CONSTRUCT WHERE { ?s ?p ?o } LIMIT 100"
+```
