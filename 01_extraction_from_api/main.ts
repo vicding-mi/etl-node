@@ -4,7 +4,7 @@ import {Parser, Writer} from 'n3';
 import yargs from 'yargs';
 import {hideBin} from 'yargs/helpers';
 import {config} from './config';
-import {createLogger, exitOnError, format, transports} from 'winston';
+import {createLogger, format, transports} from 'winston';
 
 // Set the log level based on an environment variable or default to 'info'
 const logLevel = process.env.LOG_LEVEL || config.logLevel || 'info';
@@ -214,11 +214,17 @@ function addTableFieldsToContext(jsonLd: JsonLd, tableName: string, fields: any,
             }
         }
     } else {
-        const keyTuple = [];
+        let keyTuple = [];
         for (const k in fields) {
             if (!config.context.uniqueField.includes(k)) {
                 keyTuple.push([`${k}-${tableName}`, joinUrl(config.context.baseURI, k, tableNameWithPrefix)]);
             }
+        }
+        if (tableName === "location2externalid") {
+            logger.debug(`Key tuple for ${tableName} is ${JSON.stringify(keyTuple, 2)}`);
+            logger.debug(`Removing relation field`)
+            // After populating keyTuple
+            keyTuple = keyTuple.filter(tuple => tuple[0] !== 'relation-location2externalid');
         }
         context[keyTuple[0][0]] = keyTuple[1][1];
         context[keyTuple[1][0]] = keyTuple[0][1];
@@ -314,7 +320,7 @@ function addRecordToGraph(
         relatedTables[tableName].records.push(recordData["@id"]);
         graph.push(recordData);
     } else {
-        const keyTuple = [];
+        let keyTuple = [];
         for (const k in record) {
             if (!config.context.uniqueField.includes(k)) {
                 try {
@@ -324,6 +330,11 @@ function addRecordToGraph(
                     throw error;
                 }
             }
+        }
+        //TODO: change this to a more generic solution, relation-location2externalid is a special case
+        if (tableName === "location2externalid") {
+            logger.debug(`Adding record to graph for table: ${tableName} with ID: ${recordId}`);
+            keyTuple = keyTuple.filter(tuple => tuple[0] !== 'relation-location2externalid');
         }
         const key1: string = keyTuple[0][0];
         const key2: string = keyTuple[1][0];
@@ -376,9 +387,15 @@ async function getRelatedTables(tableName: string, tables: any): Promise<any> {
     const incoming: string[] = [];
     for (const table in tables) {
         const tableMetadata = await fetchTableMetadata(table);
+        try {
         if (tableMetadata.foreign_keys[tableName]) {
             incoming.push(table);
-        }
+        }}
+        catch (error) {
+            logger.error(`Error fetching foreign keys for table ${table}: ${error}`);
+            logger.info(`Error fetching foreign keys for table ${table}: ${error}`);
+            throw Error(`Error fetching foreign keys for table ${table}: ${error}`);
+            }
     }
     relatedTables[tableName].incoming = incoming;
 
@@ -388,6 +405,7 @@ async function getRelatedTables(tableName: string, tables: any): Promise<any> {
 const tableNameMap: { [key: string]: string } = {
     "ccode": "countrycode",
     "lifespan": "timespan",
+    "part_of": "locationpartof",
     // Add more mappings as needed
 };
 
@@ -481,6 +499,9 @@ async function main(tableName: string, distance: number = 1): Promise<void> {
             logger.info(`Processing middle table: "${relatedTableName}"`);
             const table = cacheRelatedTables[relatedTableName];
             jsonLd = addTableFieldsToContext(jsonLd, relatedTableName, table.metadata.fields, tablePrefix);
+            if (relatedTableName === "location2externalid") {
+                logger.debug(`Processing record from middle table: "${relatedTableName}"`);
+            }
             for (const record of table.data) {
                 // TODO: middle table follow different rules
                 jsonLd = addRecordToGraph(jsonLd, relatedTableName, relatedTables, record, tablePrefix);
